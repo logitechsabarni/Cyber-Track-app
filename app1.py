@@ -1077,52 +1077,81 @@ with st.sidebar:
       <div style="font-family:'Share Tech Mono',monospace;font-size:.6rem;color:#4a7a9b;letter-spacing:2px;margin-top:3px">v5.5 | AI THREAT INTELLIGENCE</div>
     </div>""", unsafe_allow_html=True)
 
+    # -------- FIXED STATE INIT --------
+    if "target" not in st.session_state:
+        st.session_state.target = ""
+
+    if "target_input" not in st.session_state:
+        st.session_state.target_input = ""
+
+    # -------- SINGLE TARGET --------
     ui_section("SINGLE TARGET")
 
-    # ── FIX: text_input value= draws from pending_target so quick targets work.
-    #    We give this widget a DIFFERENT key than anything we write to directly.
     target_input = st.text_input(
         "IP / Domain",
-        value=st.session_state.pending_target,
         placeholder="8.8.8.8 or google.com",
-        key="_ti_widget",        # unique key — Streamlit owns this, we never set it
+        key="target_input"
     )
+
+    # Sync input → internal state
+    st.session_state.target = target_input
 
     ca, cb = st.columns(2)
     with ca:
-        scan_btn  = st.button("SCAN",  use_container_width=True)
+        scan_btn = st.button("SCAN", use_container_width=True)
     with cb:
         clear_btn = st.button("CLEAR", use_container_width=True)
 
+    # -------- BATCH SCAN --------
     ui_section("BATCH SCAN")
-    batch_input = st.text_area("IPs (one per line)", height=75, placeholder="8.8.8.8\n1.1.1.1")
-    batch_btn   = st.button("BATCH SCAN", use_container_width=True)
+    batch_input = st.text_area(
+        "IPs (one per line)",
+        height=75,
+        placeholder="8.8.8.8\n1.1.1.1"
+    )
+    batch_btn = st.button("BATCH SCAN", use_container_width=True)
 
+    # -------- OPTIONS --------
     ui_section("OPTIONS")
-    enable_ml      = st.toggle("ML Anomaly Detection", value=True)
-    enable_ports   = st.toggle("Port Analyzer",         value=True)
-    enable_cluster = st.toggle("Geo Clustering",        value=True)
+    enable_ml = st.toggle("ML Anomaly Detection", value=True)
+    enable_ports = st.toggle("Port Analyzer", value=True)
+    enable_cluster = st.toggle("Geo Clustering", value=True)
 
-    # ── QUICK TARGETS — write only to pending_target (no widget conflict) ────
+    # -------- QUICK TARGETS --------
     ui_section("QUICK TARGETS")
-    for lbl, q in [("Google DNS","8.8.8.8"),("Cloudflare","1.1.1.1"),
-                   ("OpenDNS","208.67.222.222"),("Quad9","9.9.9.9")]:
+
+    quick_targets = [
+        ("Google DNS", "8.8.8.8"),
+        ("Cloudflare", "1.1.1.1"),
+        ("OpenDNS", "208.67.222.222"),
+        ("Quad9", "9.9.9.9")
+    ]
+
+    for lbl, q in quick_targets:
         if st.button(f"{lbl} ({q})", key=f"qt_{q}", use_container_width=True):
-            st.session_state.pending_target = q
+            st.session_state.target = q
+            st.session_state.target_input = q
             st.rerun()
 
+    # -------- API STATUS --------
     ui_section("API STATUS")
+
     def _badge(name, live):
         cls = "conf-high" if live else "conf-low"
         return f'<span class="{cls}">{name}: {"LIVE" if live else "MOCK"}</span> '
+
     st.markdown(
         _badge("AbuseIPDB", bool(ABUSEIPDB_KEY)) +
         _badge("VirusTotal", bool(VIRUSTOTAL_KEY)) + "<br>" +
-        _badge("OpenAI",     bool(OPENAI_KEY)),
-        unsafe_allow_html=True)
+        _badge("OpenAI", bool(OPENAI_KEY)),
+        unsafe_allow_html=True
+    )
 
+    # -------- SESSION STATS --------
     ui_section("SESSION STATS")
+
     h = st.session_state.history
+
     st.markdown(f"""<div class="ip" style="font-size:.72rem">
       <span class="lb">IPs SCANNED  :</span> <span>{len(st.session_state.tracked_ips)}</span><br>
       <span class="lb">HISTORY ROWS :</span> <span>{len(h)}</span><br>
@@ -1132,17 +1161,18 @@ with st.sidebar:
       <span class="lb">STATUS       :</span> <span class="ok"><span class="pulse"></span>ONLINE</span>
     </div>""", unsafe_allow_html=True)
 
+    # -------- CLEAR --------
     if clear_btn:
-        for k in ("ip_info","ti","port_cache"):
+        for k in ("ip_info", "ti", "port_cache"):
             st.session_state[k] = {}
-        st.session_state.event_stream.append(create_event("INFO","Session cleared"))
-        st.session_state.logs.append(format_log("INFO","Session cleared"))
-        st.session_state.pending_target = ""
+
+        st.session_state.event_stream.append(create_event("INFO", "Session cleared by user"))
+        st.session_state.logs.append(format_log("INFO", "Session cleared"))
+
+        st.session_state.target = ""
+        st.session_state.target_input = ""
+
         st.rerun()
-
-# ── Resolve effective target (widget OR quick-target) ─────────────────────────
-effective_target = (target_input or "").strip() or st.session_state.pending_target.strip()
-
 # ── Scan ─────────────────────────────────────────────────────────────────────
 if scan_btn and target_input:
     with st.spinner(f"Scanning {target_input}..."):
@@ -1237,10 +1267,9 @@ with mc6: ui_metric("IPs TRACKED",  len(st.session_state.tracked_ips), "pur")
 st.markdown("<br>", unsafe_allow_html=True)
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
-tab1,tab2,tab3,tab4,tab5,tab6,tab7,tab8,tab9,tab10,tab11 = st.tabs([
-    "🗺 MAP & INTEL", "🤖 ML ANALYSIS", "📊 ANALYTICS", "🔌 PORT ANALYZER",
-    "🧬 IOC & MITRE", "📋 BATCH", "📄 REPORT", "🤖 AI COPILOT",
-    "⚡ EVENTS", "🕑 HISTORY", "💻 TERMINAL"])
+tab1,tab2,tab3,tab4,tab5,tab6,tab7,tab8,tab9,tab10 = st.tabs([
+    "MAP & INTEL","ML ANALYSIS","ANALYTICS","PORT ANALYZER",
+    "BATCH","REPORT","AI COPILOT","EVENTS","HISTORY","TERMINAL"])
 
 # TAB 1 — MAP & INTEL
 with tab1:
@@ -1419,48 +1448,9 @@ with tab4:
                 ui_alert(f"Port {p['port']} ({p['service']}) OPEN — Risk: {p['risk_w']} — {p.get('desc','')}", "hi")
     else:
         st.info("Scan a target with Port Analyzer enabled to see results.")
-with tab5:
-    ui_section("IOC GENERATOR & MITRE ATT&CK MAPPER")
-    if ip_info and ip_info.get("status") == "success" and ti:
-        rip      = ip_info.get("query","?")
-        pr_ioc   = st.session_state.port_cache.get(rip, [])
-        ioc_col, mitre_col = st.columns(2)
-        with ioc_col:
-            ui_section("INDICATORS OF COMPROMISE")
-            iocs      = generate_iocs(rip, ti, ip_info, pr_ioc)
-            ioc_count = sum(len(v) for v in iocs.values())
-            ui_metric("TOTAL IOCs", ioc_count, "red" if ioc_count>5 else "org")
-            ui_ioc_panel(iocs)
-            ioc_flat = [{"section":s,"type":ioc["type"],"value":ioc["value"],"severity":ioc["severity"]}
-                        for s,items in iocs.items() for ioc in items]
-            if ioc_flat:
-                st.download_button("Export IOCs as CSV",
-                    pd.DataFrame(ioc_flat).to_csv(index=False).encode(),
-                    f"iocs_{rip.replace('.','_')}.csv", "text/csv", use_container_width=True)
-        with mitre_col:
-            ui_section("MITRE ATT&CK TECHNIQUES")
-            techniques = get_mitre_techniques(ti, pr_ioc)
-            ui_metric("TECHNIQUES MAPPED", len(techniques), "org" if techniques else "grn")
-            ui_mitre_panel(techniques)
-            if techniques:
-                st.markdown("""<div class="ip" style="font-size:.73rem;margin-top:8px">
-                  <span class="lb">FRAMEWORK:</span> MITRE ATT&CK® Enterprise<br>
-                  <span class="lb">TACTIC:</span> Initial Access, Defense Evasion, C2<br>
-                  <span class="lb">REF:</span> attack.mitre.org
-                </div>""", unsafe_allow_html=True)
-        ui_section("THREAT SUMMARY SNAPSHOT")
-        sn1,sn2,sn3,sn4 = st.columns(4)
-        with sn1: ui_metric("FINAL SCORE",  f"{ti['final_score']}/100", "red" if ti['final_score']>60 else "org" if ti['final_score']>30 else "grn")
-        with sn2: ui_metric("RISK SIGNALS", ti.get("signals",0), "red" if ti.get("signals",0)>=4 else "org")
-        with sn3: ui_metric("IOC COUNT",    ioc_count, "red" if ioc_count>5 else "org")
-        with sn4: ui_metric("MITRE TECHS",  len(techniques), "org" if techniques else "grn")
-    else:
-        st.markdown("""<div style="text-align:center;padding:60px 20px">
-          <div style="font-family:'Orbitron',monospace;font-size:2rem;color:#0d4f6e">[ IOC ]</div>
-          <div style="font-family:'Share Tech Mono',monospace;font-size:.88rem;color:#4a7a9b;letter-spacing:2px;margin-top:10px">SCAN A TARGET TO GENERATE IOCs &amp; MITRE MAPPING</div>
-        </div>""", unsafe_allow_html=True)
+
 # TAB 5 — BATCH
-with tab6:
+with tab5:
     ui_section("BATCH SCAN RESULTS")
     if st.session_state.batch_results:
         bdf = pd.DataFrame(st.session_state.batch_results)
@@ -1498,7 +1488,7 @@ with tab6:
                 ui_alert("Invalid IP / CIDR notation", "hi")
 
 # TAB 6 — REPORT
-with tab7:
+with tab6:
     ui_section("REPORT EXPORT SYSTEM")
     if ip_info and ip_info.get("status") == "success" and ti:
         resolved_ip = ip_info.get("query","unknown")
@@ -1539,7 +1529,7 @@ with tab7:
         st.markdown('<div style="text-align:center;padding:50px 20px"><div style="font-family:Share Tech Mono,monospace;font-size:.88rem;color:#4a7a9b;letter-spacing:2px">SCAN A TARGET TO GENERATE REPORT</div></div>', unsafe_allow_html=True)
 
 # TAB 7 — AI COPILOT
-with tab8:
+with tab7:
     ui_section("AI SECURITY COPILOT")
     mode = "OpenAI GPT-3.5" if OPENAI_KEY else "Rule-Based Engine"
     st.markdown(f'<div class="ip" style="font-size:.76rem"><span class="pulse"></span><span class="lb">MODE:</span> <span class="ok">{mode}</span></div>', unsafe_allow_html=True)
@@ -1571,7 +1561,7 @@ with tab8:
             st.rerun()
 
 # TAB 8 — EVENTS [NEW v5.5]
-with tab9:
+with tab8:
     ev_col1, ev_col2 = st.columns([3, 2])
     with ev_col1:
         ui_section("LIVE EVENT STREAM")
@@ -1605,7 +1595,7 @@ with tab9:
             ui_decision_panel(ti)
 
 # TAB 9 — HISTORY
-with tab10:
+with tab9:
     ui_section("SCAN HISTORY")
     hf1,hf2,hf3 = st.columns(3)
     with hf1: cf = st.selectbox("Country",["All"]+sorted(hdf["country"].dropna().unique().tolist()))
@@ -1632,7 +1622,7 @@ with tab10:
             st.rerun()
 
 # TAB 10 — TERMINAL
-with tab11:
+with tab10:
     ui_section("LIVE SYSTEM TERMINAL")
     st.markdown(f'<div class="term">{"".join(st.session_state.logs[-50:])}</div>', unsafe_allow_html=True)
     tc1,tc2,tc3 = st.columns(3)
