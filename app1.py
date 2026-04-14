@@ -1096,6 +1096,8 @@ with st.sidebar:
     for lbl, q in [("Google DNS","8.8.8.8"),("Cloudflare","1.1.1.1"),("OpenDNS","208.67.222.222"),("Quad9","9.9.9.9")]:
         if st.button(f"{lbl} ({q})", key=f"qt_{q}", use_container_width=True):
             st.session_state.target = q
+            st.session_state.target_input = q
+
             st.rerun()
 
     ui_section("API STATUS")
