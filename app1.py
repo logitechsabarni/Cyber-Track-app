@@ -1077,41 +1077,81 @@ with st.sidebar:
       <div style="font-family:'Share Tech Mono',monospace;font-size:.6rem;color:#4a7a9b;letter-spacing:2px;margin-top:3px">v5.5 | AI THREAT INTELLIGENCE</div>
     </div>""", unsafe_allow_html=True)
 
+    # -------- FIXED STATE INIT --------
+    if "target" not in st.session_state:
+        st.session_state.target = ""
+
+    if "target_input" not in st.session_state:
+        st.session_state.target_input = ""
+
+    # -------- SINGLE TARGET --------
     ui_section("SINGLE TARGET")
-    target_input = st.text_input("IP / Domain", placeholder="8.8.8.8 or google.com", key="target")
+
+    target_input = st.text_input(
+        "IP / Domain",
+        placeholder="8.8.8.8 or google.com",
+        key="target_input"
+    )
+
+    # Sync input → internal state
+    st.session_state.target = target_input
+
     ca, cb = st.columns(2)
-    with ca: scan_btn  = st.button("SCAN",  use_container_width=True)
-    with cb: clear_btn = st.button("CLEAR", use_container_width=True)
+    with ca:
+        scan_btn = st.button("SCAN", use_container_width=True)
+    with cb:
+        clear_btn = st.button("CLEAR", use_container_width=True)
 
+    # -------- BATCH SCAN --------
     ui_section("BATCH SCAN")
-    batch_input = st.text_area("IPs (one per line)", height=75, placeholder="8.8.8.8\n1.1.1.1")
-    batch_btn   = st.button("BATCH SCAN", use_container_width=True)
+    batch_input = st.text_area(
+        "IPs (one per line)",
+        height=75,
+        placeholder="8.8.8.8\n1.1.1.1"
+    )
+    batch_btn = st.button("BATCH SCAN", use_container_width=True)
 
+    # -------- OPTIONS --------
     ui_section("OPTIONS")
-    enable_ml      = st.toggle("ML Anomaly Detection", value=True)
-    enable_ports   = st.toggle("Port Analyzer",        value=True)
-    enable_cluster = st.toggle("Geo Clustering",       value=True)
+    enable_ml = st.toggle("ML Anomaly Detection", value=True)
+    enable_ports = st.toggle("Port Analyzer", value=True)
+    enable_cluster = st.toggle("Geo Clustering", value=True)
 
+    # -------- QUICK TARGETS --------
     ui_section("QUICK TARGETS")
-    for lbl, q in [("Google DNS","8.8.8.8"),("Cloudflare","1.1.1.1"),("OpenDNS","208.67.222.222"),("Quad9","9.9.9.9")]:
+
+    quick_targets = [
+        ("Google DNS", "8.8.8.8"),
+        ("Cloudflare", "1.1.1.1"),
+        ("OpenDNS", "208.67.222.222"),
+        ("Quad9", "9.9.9.9")
+    ]
+
+    for lbl, q in quick_targets:
         if st.button(f"{lbl} ({q})", key=f"qt_{q}", use_container_width=True):
             st.session_state.target = q
             st.session_state.target_input = q
-
             st.rerun()
 
+    # -------- API STATUS --------
     ui_section("API STATUS")
+
     def _badge(name, live):
         cls = "conf-high" if live else "conf-low"
         return f'<span class="{cls}">{name}: {"LIVE" if live else "MOCK"}</span> '
+
     st.markdown(
         _badge("AbuseIPDB", bool(ABUSEIPDB_KEY)) +
         _badge("VirusTotal", bool(VIRUSTOTAL_KEY)) + "<br>" +
         _badge("OpenAI", bool(OPENAI_KEY)),
-        unsafe_allow_html=True)
+        unsafe_allow_html=True
+    )
 
+    # -------- SESSION STATS --------
     ui_section("SESSION STATS")
+
     h = st.session_state.history
+
     st.markdown(f"""<div class="ip" style="font-size:.72rem">
       <span class="lb">IPs SCANNED  :</span> <span>{len(st.session_state.tracked_ips)}</span><br>
       <span class="lb">HISTORY ROWS :</span> <span>{len(h)}</span><br>
@@ -1121,13 +1161,18 @@ with st.sidebar:
       <span class="lb">STATUS       :</span> <span class="ok"><span class="pulse"></span>ONLINE</span>
     </div>""", unsafe_allow_html=True)
 
+    # -------- CLEAR --------
     if clear_btn:
-        for k in ("ip_info","ti","port_cache"):
+        for k in ("ip_info", "ti", "port_cache"):
             st.session_state[k] = {}
-        st.session_state.event_stream.append(create_event("INFO","Session cleared by user"))
-        st.session_state.logs.append(format_log("INFO","Session cleared"))
-        st.rerun()
 
+        st.session_state.event_stream.append(create_event("INFO", "Session cleared by user"))
+        st.session_state.logs.append(format_log("INFO", "Session cleared"))
+
+        st.session_state.target = ""
+        st.session_state.target_input = ""
+
+        st.rerun()
 # ── Scan ─────────────────────────────────────────────────────────────────────
 if scan_btn and target_input:
     with st.spinner(f"Scanning {target_input}..."):
