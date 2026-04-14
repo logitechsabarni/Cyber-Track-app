@@ -1,14 +1,15 @@
 """
-CyberTrack v5.0 — AI-Powered Cyber Threat Intelligence Platform
+CyberTrack v5.5 — AI-Powered Cyber Threat Intelligence Platform
 Architecture:
   1. Config & Constants
   2. Utility Functions
   3. Cached API Layer
   4. Threat Intelligence Engine
   5. ML Engine
-  6. Visualization Functions
-  7. UI Components
-  8. Main App Controller
+  6. Event & Behavior Engine        [NEW v5.5]
+  7. Visualization Functions
+  8. UI Components
+  9. Main App Controller
 """
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -36,7 +37,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 st.set_page_config(
-    page_title="CyberTrack v5.0",
+    page_title="CyberTrack v5.5",
     page_icon="🛡️",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -46,6 +47,7 @@ ABUSEIPDB_KEY  = os.environ.get("ABUSEIPDB_API_KEY",  "")
 VIRUSTOTAL_KEY = os.environ.get("VIRUSTOTAL_API_KEY",  "")
 OPENAI_KEY     = os.environ.get("OPENAI_API_KEY",      "")
 GEO_JUMP_KM    = 5000
+HIGH_THREAT_THRESHOLD = 70   # [NEW v5.5] alert banner threshold
 
 PORT_RISKS = {
     21:   ("FTP",      35, "File Transfer — often unencrypted"),
@@ -131,6 +133,23 @@ st.markdown("""
   .lb-row{display:flex;align-items:center;justify-content:space-between;padding:7px 10px;border-bottom:1px solid rgba(13,79,110,.3);font-family:'Share Tech Mono',monospace;font-size:.78rem;}
   .lb-row:hover{background:rgba(0,212,255,.03);}
   .lb-num{color:var(--dim);min-width:22px;} .lb-ip{color:var(--accent);} .lb-score{font-weight:bold;}
+  /* NEW v5.5 styles */
+  .alert-banner{background:rgba(255,0,51,.12);border:2px solid #ff0033;border-radius:4px;padding:14px 20px;margin-bottom:14px;font-family:'Share Tech Mono',monospace;font-size:.88rem;color:#ff0033;display:flex;align-items:center;gap:10px;animation:ablink 1.5s infinite;}
+  .decision-panel{background:linear-gradient(135deg,#071520,#0a1f2e);border:1px solid var(--border);border-radius:4px;padding:16px;margin:8px 0;}
+  .decision-panel.high{border-color:var(--red);} .decision-panel.medium{border-color:var(--orange);} .decision-panel.low{border-color:var(--green);}
+  .decision-title{font-family:'Orbitron',monospace;font-size:.8rem;letter-spacing:2px;margin-bottom:10px;}
+  .decision-title.high{color:var(--red);} .decision-title.medium{color:var(--orange);} .decision-title.low{color:var(--green);}
+  .decision-item{font-family:'Share Tech Mono',monospace;font-size:.76rem;color:var(--text);padding:4px 0;border-bottom:1px solid rgba(13,79,110,.2);}
+  .decision-item:last-child{border-bottom:none;}
+  .event-row{display:flex;align-items:flex-start;gap:8px;padding:5px 0;border-bottom:1px solid rgba(13,79,110,.15);font-family:'Share Tech Mono',monospace;font-size:.75rem;}
+  .ev-time{color:var(--dim);min-width:68px;} .ev-info{color:var(--accent);} .ev-warn{color:var(--orange);} .ev-crit{color:var(--red);font-weight:bold;}
+  .ev-msg{color:var(--text);}
+  .src-ok{color:var(--green);} .src-miss{color:var(--dim);}
+  .behavior-insight{background:rgba(168,85,247,.07);border-left:3px solid var(--purple);padding:10px 14px;margin:6px 0;font-family:'Share Tech Mono',monospace;font-size:.76rem;color:var(--text);line-height:1.8;}
+  .signals-badge{display:inline-block;padding:3px 9px;border-radius:2px;font-family:'Share Tech Mono',monospace;font-size:.7rem;margin-left:8px;}
+  .corr-high{background:rgba(255,45,85,.12);border:1px solid var(--red);color:var(--red);}
+  .corr-med{background:rgba(255,170,0,.12);border:1px solid var(--orange);color:var(--orange);}
+  .corr-low{background:rgba(0,255,136,.12);border:1px solid var(--green);color:var(--green);}
 </style>
 """, unsafe_allow_html=True)
 
@@ -216,6 +235,7 @@ def generate_history(n: int = 40) -> pd.DataFrame:
         })
     return pd.DataFrame(records)
 
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # 3. CACHED API LAYER
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -276,6 +296,7 @@ def fetch_virustotal(ip: str) -> dict:
         pass
     return {"available": False}
 
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # 4. THREAT INTELLIGENCE ENGINE
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -331,6 +352,29 @@ def compute_geo_anomaly(ip_info: dict, history_df: pd.DataFrame) -> tuple:
     except Exception:
         return 0, None
 
+def count_risk_signals(ti_partial: dict, flags: dict) -> int:
+    """[NEW v5.5] Count number of distinct risk signals triggered."""
+    count = 0
+    if ti_partial.get("abuse_score", 0) > 40: count += 1
+    if ti_partial.get("vt_score", 0) > 30:    count += 1
+    if ti_partial.get("port_score", 0) > 30:  count += 1
+    if ti_partial.get("geo_score", 0) > 0:    count += 1
+    if ti_partial.get("freq_score", 0) > 20:  count += 1
+    if flags.get("isTor"):      count += 1
+    if flags.get("isVPN"):      count += 1
+    if flags.get("isProxy"):    count += 1
+    if flags.get("isBot"):      count += 1
+    if flags.get("isDatacenter"): count += 1
+    return count
+
+def correlated_threat_level(score: int, signals: int) -> tuple:
+    """[NEW v5.5] Correlated threat level based on score + signal count."""
+    if score > 60 or signals >= 4:
+        return "HIGH", "corr-high"
+    if score > 35 or signals >= 2:
+        return "MEDIUM", "corr-med"
+    return "LOW", "corr-low"
+
 def build_threat_intel(ip: str, ip_info: dict, port_results: list, history_df: pd.DataFrame) -> dict:
     abuse_data = fetch_abuseipdb(ip)
     vt_data = fetch_virustotal(ip)
@@ -367,22 +411,32 @@ def build_threat_intel(ip: str, ip_info: dict, port_results: list, history_df: p
               else "virustotal" if vt_data.get("available")
               else "simulated")
 
+    # [NEW v5.5] correlated level + signals
+    partial = {"abuse_score":abuse_score,"vt_score":vt_score,"port_score":port_score,"geo_score":geo_score,"freq_score":freq_score}
+    signals = count_risk_signals(partial, flags)
+    corr_level, corr_cls = correlated_threat_level(final, signals)
+
     return {
-        "final_score":  final,
-        "abuse_score":  abuse_score,
-        "vt_score":     vt_score,
-        "port_score":   port_score,
-        "geo_score":    geo_score,
-        "freq_score":   freq_score,
-        "km_dist":      km_dist,
-        "flags":        flags,
-        "port_xai":     port_xai,
-        "xai":          xai,
-        "confidence":   confidence,
-        "conf_cls":     conf_cls,
-        "conf_msg":     conf_msg,
-        "risk_level":   risk_label(final),
-        "source":       source,
+        "final_score":   final,
+        "abuse_score":   abuse_score,
+        "vt_score":      vt_score,
+        "port_score":    port_score,
+        "geo_score":     geo_score,
+        "freq_score":    freq_score,
+        "km_dist":       km_dist,
+        "flags":         flags,
+        "port_xai":      port_xai,
+        "xai":           xai,
+        "confidence":    confidence,
+        "conf_cls":      conf_cls,
+        "conf_msg":      conf_msg,
+        "risk_level":    risk_label(final),
+        "source":        source,
+        "signals":       signals,           # [NEW v5.5]
+        "corr_level":    corr_level,        # [NEW v5.5]
+        "corr_cls":      corr_cls,          # [NEW v5.5]
+        "abuse_available": abuse_data.get("available", False),   # [NEW v5.5]
+        "vt_available":    vt_data.get("available", False),      # [NEW v5.5]
     }
 
 def predict_threat_category(ti: dict) -> str:
@@ -410,6 +464,29 @@ def build_why_risky(ti: dict, ip_info: dict) -> list:
     rows.sort(key=lambda x: -x[1])
     return rows[:8]
 
+def build_xai_reasoning(ti: dict, ip_info: dict) -> str:
+    """[NEW v5.5] Generate textual reasoning for XAI panel."""
+    score = ti["final_score"]
+    f = ti["flags"]
+    parts = []
+    if ti["abuse_score"] > 50:
+        parts.append(f"High abuse confidence ({ti['abuse_score']}/100) suggests repeated malicious activity reported by the community.")
+    if ti["vt_score"] > 30:
+        parts.append(f"VirusTotal reputation score of {ti['vt_score']}/100 indicates detection by security vendors.")
+    if ti["port_score"] > 40:
+        parts.append(f"Open high-risk ports contribute {ti['port_score']} risk points — likely exploitable attack surfaces.")
+    if ti["geo_score"] > 0:
+        parts.append(f"Geographic anomaly detected: origin is {ti.get('km_dist',0):,.0f} km from last known location.")
+    if f.get("isTor"):
+        parts.append("IP is a known Tor exit node — identity concealment strongly indicated.")
+    if f.get("isVPN"):
+        parts.append("VPN or anonymizer service detected — true origin is masked.")
+    if f.get("isBot"):
+        parts.append("Automated bot behaviour detected — high scan frequency or scripted requests.")
+    if not parts:
+        parts.append(f"Overall threat score is {score}/100 with no single dominant risk factor.")
+    return " ".join(parts)
+
 def build_report(ip_info: dict, ti: dict, port_results: list) -> dict:
     wh_seed = random.Random(sum(ord(c) for c in ip_info.get("query","x")))
     reg_date = (datetime.now() - timedelta(days=wh_seed.randint(180,3650))).strftime("%Y-%m-%d")
@@ -435,6 +512,8 @@ def build_report(ip_info: dict, ti: dict, port_results: list) -> dict:
             "port_score":   ti["port_score"],
             "geo_score":    ti["geo_score"],
             "risk_level":   ti["risk_level"],
+            "corr_level":   ti["corr_level"],
+            "signals":      ti["signals"],
             "confidence":   ti["confidence"],
             "source":       ti["source"],
             "is_vpn":       ti["flags"].get("isVPN",False),
@@ -465,6 +544,7 @@ def report_to_csv(report: dict) -> str:
     for p in report["port_scan"]:
         rows.append({"section":"Ports","field":f"{p['port']}/{p['service']}","value":p["state"]})
     return pd.DataFrame(rows).to_csv(index=False)
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 5. ML ENGINE
@@ -505,8 +585,92 @@ def ml_cluster_analysis(df: pd.DataFrame) -> pd.DataFrame:
         df["cluster"] = -1
     return df
 
+
 # ═══════════════════════════════════════════════════════════════════════════════
-# 6. VISUALIZATION FUNCTIONS
+# 6. EVENT & BEHAVIOR ENGINE  [NEW v5.5]
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def create_event(level: str, message: str) -> dict:
+    """Create a structured event entry."""
+    return {"timestamp": datetime.now(), "level": level, "message": message}
+
+def emit_scan_events(ip: str, ti: dict, ip_info: dict, port_results: list) -> list:
+    """Emit events for a scan action."""
+    events = []
+    events.append(create_event("INFO", f"Scan initiated for {ip}"))
+    events.append(create_event("INFO", f"Located: {ip_info.get('city','?')}, {ip_info.get('country','?')}"))
+
+    score = ti["final_score"]
+    if score > HIGH_THREAT_THRESHOLD:
+        events.append(create_event("CRITICAL", f"HIGH THREAT DETECTED — score {score}/100 for {ip}"))
+    elif score > 40:
+        events.append(create_event("WARNING", f"Suspicious IP — score {score}/100"))
+    else:
+        events.append(create_event("INFO", f"Scan complete — score {score}/100 (nominal)"))
+
+    open_high = [p for p in port_results if p["state"] == "OPEN" and p["port"] in HIGH_RISK_PORTS]
+    if open_high:
+        port_names = ", ".join(f"{p['port']}/{p['service']}" for p in open_high[:3])
+        events.append(create_event("WARNING", f"High-risk open ports detected: {port_names}"))
+
+    if ti["flags"].get("isTor"):
+        events.append(create_event("CRITICAL", f"Tor exit node confirmed for {ip}"))
+    if ti["flags"].get("isVPN"):
+        events.append(create_event("WARNING", f"VPN/anonymizer detected for {ip}"))
+    if ti["flags"].get("isBot"):
+        events.append(create_event("WARNING", f"Automated bot activity flagged for {ip}"))
+    if ti.get("geo_score", 0) > 0:
+        events.append(create_event("WARNING", f"Geo anomaly: {ti.get('km_dist',0):,.0f} km jump from last scan"))
+
+    return events
+
+def analyze_behavior(tracked_ips: list, history_df: pd.DataFrame) -> list:
+    """[NEW v5.5] Generate behavioral insights from scan patterns."""
+    insights = []
+    if len(tracked_ips) >= 3:
+        insights.append(f"Analyst has scanned {len(tracked_ips)} IPs in this session — potential automated sweep or investigation pattern.")
+
+    if not history_df.empty:
+        high_risk = history_df[history_df["threat"] > 70]
+        if len(high_risk) >= 3:
+            insights.append(f"{len(high_risk)} high-risk events recorded — elevated threat environment detected.")
+
+        country_counts = history_df["country"].value_counts()
+        if len(country_counts) > 0:
+            top_country = country_counts.index[0]
+            top_count = int(country_counts.iloc[0])
+            if top_count >= 5:
+                insights.append(f"Activity cluster from {top_country} ({top_count} events) — possible targeted campaign origin.")
+
+        recent = history_df[history_df["timestamp"] > datetime.now() - timedelta(hours=2)]
+        if len(recent) >= 5:
+            insights.append(f"{len(recent)} scans in the last 2 hours — high-frequency reconnaissance pattern detected.")
+
+        if "event" in history_df.columns:
+            attack_events = history_df[history_df["event"].isin(["ATTACK","BRUTE_FORCE","SQL_INJECT","C2_BEACON"])]
+            if len(attack_events) >= 2:
+                insights.append(f"{len(attack_events)} offensive event types logged — active attack chain may be in progress.")
+
+    if not insights:
+        insights.append("Behavioral baseline normal — no anomalous scan patterns detected.")
+    return insights
+
+def render_event_stream(events: list) -> str:
+    """Render structured events as HTML."""
+    cls_map = {"INFO": "ev-info", "WARNING": "ev-warn", "CRITICAL": "ev-crit"}
+    html = ""
+    for ev in reversed(events[-30:]):
+        t = ev["timestamp"].strftime("%H:%M:%S")
+        cls = cls_map.get(ev["level"], "ev-info")
+        html += (f'<div class="event-row">'
+                 f'<span class="ev-time">[{t}]</span>'
+                 f'<span class="{cls}">[{ev["level"]}]</span>'
+                 f'<span class="ev-msg">&nbsp;{ev["message"]}</span></div>')
+    return html or '<div class="event-row"><span class="ev-info">No events yet — scan a target to populate the stream.</span></div>'
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 7. VISUALIZATION FUNCTIONS
 # ═══════════════════════════════════════════════════════════════════════════════
 
 PLOTLY_BASE = dict(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(7,21,32,.85)",
@@ -659,8 +823,9 @@ def chart_threat_score_history(records: list):
                       xaxis=dict(**GRID), yaxis=dict(**GRID, range=[0,105]))
     return fig
 
+
 # ═══════════════════════════════════════════════════════════════════════════════
-# 7. UI COMPONENTS
+# 8. UI COMPONENTS
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def ui_metric(label, value, variant=""):
@@ -710,6 +875,89 @@ def ui_leaderboard(df: pd.DataFrame):
             f'<span class="lb-score" style="{sc}">{row["threat"]}</span></div>',
             unsafe_allow_html=True)
 
+def ui_alert_banner(score: int, ip: str):
+    """[NEW v5.5] Top-level alert banner for high threat scores."""
+    if score >= HIGH_THREAT_THRESHOLD:
+        st.markdown(
+            f'<div class="alert-banner">'
+            f'<span class="blink-red"></span>'
+            f'⚠ CRITICAL ALERT — IP {ip} scored {score}/100. Immediate action recommended. '
+            f'Block at perimeter firewall and escalate to SOC team.'
+            f'</div>',
+            unsafe_allow_html=True)
+
+def ui_correlated_level(corr_level: str, corr_cls: str, signals: int):
+    """[NEW v5.5] Display correlated threat level + signal count badge."""
+    st.markdown(
+        f'<div style="margin:8px 0;font-family:Share Tech Mono,monospace;font-size:.8rem;color:var(--dim)">'
+        f'CORRELATED THREAT LEVEL: '
+        f'<span class="signals-badge {corr_cls}">{corr_level}</span>'
+        f'&nbsp;&nbsp;RISK SIGNALS: '
+        f'<span class="signals-badge {corr_cls}">{signals} triggered</span>'
+        f'</div>',
+        unsafe_allow_html=True)
+
+def ui_data_sources(has_abuse: bool, has_vt: bool):
+    """[NEW v5.5] Display data source checklist."""
+    abuse_icon = '<span class="src-ok">✔</span>' if has_abuse else '<span class="src-miss">✖</span>'
+    vt_icon    = '<span class="src-ok">✔</span>' if has_vt    else '<span class="src-miss">✖</span>'
+    geo_icon   = '<span class="src-ok">✔</span>'  # ip-api always used
+    st.markdown(
+        f'<div class="ip" style="font-size:.75rem;padding:10px 14px">'
+        f'<span class="lb">DATA SOURCES</span><br>'
+        f'{abuse_icon} AbuseIPDB &nbsp;&nbsp; {vt_icon} VirusTotal &nbsp;&nbsp; {geo_icon} GeoIP (ip-api)'
+        f'</div>',
+        unsafe_allow_html=True)
+
+def ui_decision_panel(ti: dict):
+    """[NEW v5.5] Decision support panel with recommended actions."""
+    score = ti["final_score"]
+    corr_level = ti.get("corr_level", "LOW")
+
+    if corr_level == "HIGH" or score > 60:
+        level_cls = "high"
+        title = "⛔ HIGH RISK — IMMEDIATE ACTION REQUIRED"
+        actions = [
+            "→ Block IP at perimeter firewall (deny all inbound/outbound)",
+            "→ Add to SIEM/SOAR blocklist immediately",
+            "→ Review all historical sessions from this IP",
+            "→ Geo-block origin country if applicable",
+            "→ Escalate to SOC Tier 2 for investigation",
+            "→ Preserve logs for forensic analysis",
+        ]
+    elif corr_level == "MEDIUM" or score > 35:
+        level_cls = "medium"
+        title = "⚠ MEDIUM RISK — MONITOR & INVESTIGATE"
+        actions = [
+            "→ Add IP to watchlist for 24-hour monitoring",
+            "→ Enable enhanced logging for this source",
+            "→ Rate-limit connections from this IP",
+            "→ Verify if IP belongs to known partner/vendor",
+            "→ Alert on repeat activity within 6 hours",
+        ]
+    else:
+        level_cls = "low"
+        title = "✔ LOW RISK — STANDARD MONITORING"
+        actions = [
+            "→ No immediate action required",
+            "→ Continue standard baseline monitoring",
+            "→ Log for future reference",
+        ]
+
+    items_html = "".join(f'<div class="decision-item">{a}</div>' for a in actions)
+    st.markdown(
+        f'<div class="decision-panel {level_cls}">'
+        f'<div class="decision-title {level_cls}">{title}</div>'
+        f'{items_html}'
+        f'</div>',
+        unsafe_allow_html=True)
+
+def ui_behavior_insights(insights: list):
+    """[NEW v5.5] Render behavior analysis insights."""
+    for insight in insights:
+        st.markdown(f'<div class="behavior-insight">🔍 {insight}</div>', unsafe_allow_html=True)
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # AI COPILOT
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -752,7 +1000,8 @@ def rule_based_answer(q: str, ip_info: dict, ti: dict) -> str:
 def openai_answer(q: str, ip_info: dict, ti: dict) -> str:
     ctx = (f"IP={ip_info.get('query')}, Country={ip_info.get('country')}, "
            f"ISP={ip_info.get('isp')}, ThreatScore={ti['final_score']}/100, "
-           f"Risk={ti['risk_level']}, VPN={ti['flags'].get('isVPN')}, "
+           f"Risk={ti['risk_level']}, CorrelatedLevel={ti.get('corr_level','?')}, "
+           f"Signals={ti.get('signals',0)}, VPN={ti['flags'].get('isVPN')}, "
            f"Tor={ti['flags'].get('isTor')}, Confidence={ti['confidence']}")
     try:
         r = requests.post(
@@ -775,6 +1024,7 @@ def ask_copilot(q: str, ip_info: dict, ti: dict) -> str:
         return "[COPILOT] Scan an IP first to provide analysis context."
     return openai_answer(q, ip_info, ti) if OPENAI_KEY else rule_based_answer(q, ip_info, ti)
 
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # SESSION STATE
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -782,9 +1032,10 @@ def ask_copilot(q: str, ip_info: dict, ti: dict) -> str:
 _defaults = {
     "history":        lambda: generate_history(40),
     "logs":           lambda: [
-        format_log("OK","CyberTrack v5.0 initialized"),
+        format_log("OK","CyberTrack v5.5 initialized"),
         format_log("INFO",f"APIs: AbuseIPDB={'LIVE' if ABUSEIPDB_KEY else 'MOCK'} | VT={'LIVE' if VIRUSTOTAL_KEY else 'MOCK'} | OpenAI={'LIVE' if OPENAI_KEY else 'RULE-BASED'}"),
         format_log("OK","ML engine ready (IsolationForest + DBSCAN)"),
+        format_log("OK","Event & Behavior engine ready"),
     ],
     "tracked_ips":    list,
     "ip_info":        dict,
@@ -794,28 +1045,36 @@ _defaults = {
     "threat_history": list,
     "chat_history":   list,
     "anomaly_count":  lambda: 0,
+    "event_stream":   list,      # [NEW v5.5]
 }
 for k, f in _defaults.items():
     if k not in st.session_state:
         st.session_state[k] = f()
 
+
 # ═══════════════════════════════════════════════════════════════════════════════
-# 8. MAIN APP CONTROLLER
+# 9. MAIN APP CONTROLLER
 # ═══════════════════════════════════════════════════════════════════════════════
 
 st.markdown("""
 <div class="cyber-header">
-  <div class="cyber-title">CYBERTRACK v5.0</div>
+  <div class="cyber-title">CYBERTRACK v5.5</div>
   <div class="cyber-sub">AI-POWERED CYBER THREAT INTELLIGENCE PLATFORM</div>
 </div>
 """, unsafe_allow_html=True)
+
+# ── [NEW v5.5] Top-level alert banner ────────────────────────────────────────
+ip_info_top = st.session_state.ip_info
+ti_top = st.session_state.ti
+if ip_info_top and ip_info_top.get("status") == "success" and ti_top:
+    ui_alert_banner(ti_top.get("final_score", 0), ip_info_top.get("query","?"))
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("""
     <div style="text-align:center;padding:10px 0 18px">
       <div style="font-family:'Orbitron',monospace;font-size:1.3rem;color:#00d4ff;letter-spacing:3px">CYBERTRACK</div>
-      <div style="font-family:'Share Tech Mono',monospace;font-size:.6rem;color:#4a7a9b;letter-spacing:2px;margin-top:3px">v5.0 | AI THREAT INTELLIGENCE</div>
+      <div style="font-family:'Share Tech Mono',monospace;font-size:.6rem;color:#4a7a9b;letter-spacing:2px;margin-top:3px">v5.5 | AI THREAT INTELLIGENCE</div>
     </div>""", unsafe_allow_html=True)
 
     ui_section("SINGLE TARGET")
@@ -856,12 +1115,14 @@ with st.sidebar:
       <span class="lb">HISTORY ROWS :</span> <span>{len(h)}</span><br>
       <span class="lb">BATCH RESULTS:</span> <span>{len(st.session_state.batch_results)}</span><br>
       <span class="lb">ANOMALIES    :</span> <span class="wn">{st.session_state.anomaly_count}</span><br>
+      <span class="lb">EVENTS       :</span> <span>{len(st.session_state.event_stream)}</span><br>
       <span class="lb">STATUS       :</span> <span class="ok"><span class="pulse"></span>ONLINE</span>
     </div>""", unsafe_allow_html=True)
 
     if clear_btn:
         for k in ("ip_info","ti","port_cache"):
             st.session_state[k] = {}
+        st.session_state.event_stream.append(create_event("INFO","Session cleared by user"))
         st.session_state.logs.append(format_log("INFO","Session cleared"))
         st.rerun()
 
@@ -869,6 +1130,7 @@ with st.sidebar:
 if scan_btn and target_input:
     with st.spinner(f"Scanning {target_input}..."):
         st.session_state.logs.append(format_log("INFO", f"Scan: {target_input}"))
+        st.session_state.event_stream.append(create_event("INFO", f"Scan initiated for {target_input}"))
         ip_data = fetch_ip_info(target_input)
         if ip_data and ip_data.get("status") == "success":
             resolved = ip_data.get("_resolved_ip", target_input)
@@ -878,6 +1140,11 @@ if scan_btn and target_input:
             st.session_state.ti = ti
             if enable_ports:
                 st.session_state.port_cache[resolved] = port_res
+
+            # [NEW v5.5] Emit structured events
+            new_events = emit_scan_events(resolved, ti, ip_data, port_res)
+            st.session_state.event_stream.extend(new_events)
+
             if resolved not in st.session_state.tracked_ips:
                 st.session_state.tracked_ips.append(resolved)
             new_row = pd.DataFrame([{
@@ -892,15 +1159,21 @@ if scan_btn and target_input:
             ml_score, ml_label = ml_anomaly_score(ip_data, ti, st.session_state.history) if enable_ml else (0,"N/A")
             if ml_label in ("HIGHLY ANOMALOUS","SUSPICIOUS"):
                 st.session_state.anomaly_count += 1
+                st.session_state.event_stream.append(create_event("WARNING", f"ML anomaly detected for {resolved} — {ml_label}"))
             ts = ti["final_score"]
             st.session_state.logs.append(format_log("OK", f"Located: {ip_data.get('city')}, {ip_data.get('country')}"))
             st.session_state.logs.append(format_log("INFO", f"Score: {ts}/100 | Confidence: {ti['confidence']} | Source: {ti['source']}"))
-            st.session_state.logs.append(format_log("INFO", f"ML: {ml_label} ({ml_score})"))
-            if ts > 60: st.session_state.logs.append(format_log("ERROR", f"HIGH THREAT: {ts}/100"))
-            elif ts > 30: st.session_state.logs.append(format_log("WARN", f"Moderate: {ts}/100"))
-            else: st.session_state.logs.append(format_log("OK", f"Nominal: {ts}/100"))
+            st.session_state.logs.append(format_log("INFO", f"ML: {ml_label} ({ml_score}) | Signals: {ti.get('signals',0)} | Corr: {ti.get('corr_level','?')}"))
+            if ts > 60:
+                st.session_state.logs.append(format_log("ERROR", f"HIGH THREAT: {ts}/100"))
+                st.session_state.event_stream.append(create_event("CRITICAL", f"Alert threshold exceeded: {ts}/100 for {resolved}"))
+            elif ts > 30:
+                st.session_state.logs.append(format_log("WARN", f"Moderate: {ts}/100"))
+            else:
+                st.session_state.logs.append(format_log("OK", f"Nominal: {ts}/100"))
         else:
             st.session_state.logs.append(format_log("ERROR", f"Failed: {target_input}"))
+            st.session_state.event_stream.append(create_event("WARNING", f"Failed to resolve {target_input}"))
             st.error(f"Could not resolve {target_input}. Check the address and retry.")
 
 # ── Batch ────────────────────────────────────────────────────────────────────
@@ -908,6 +1181,7 @@ if batch_btn and batch_input.strip():
     targets = [t.strip() for t in batch_input.strip().splitlines() if t.strip()][:15]
     results = []
     prog = st.progress(0)
+    st.session_state.event_stream.append(create_event("INFO", f"Batch scan started — {len(targets)} targets"))
     for i, tgt in enumerate(targets):
         ii = fetch_ip_info(tgt)
         res = {"ip":tgt,"country":"FAILED","city":"","isp":"","threat":0,"vpn":False,"tor":False,"risk":"N/A","source":"error","lat":0.,"lon":0.}
@@ -918,10 +1192,13 @@ if batch_btn and batch_input.strip():
                    "isp":ii.get("isp","?"),"threat":td["final_score"],"vpn":td["flags"].get("isVPN",False),
                    "tor":td["flags"].get("isTor",False),"risk":td["risk_level"],"source":td["source"],
                    "lat":float(ii.get("lat",0)),"lon":float(ii.get("lon",0))}
+            if td["final_score"] > HIGH_THREAT_THRESHOLD:
+                st.session_state.event_stream.append(create_event("CRITICAL", f"Batch: high threat {td['final_score']}/100 for {tgt}"))
         results.append(res)
         prog.progress((i+1)/len(targets))
     prog.empty()
     st.session_state.batch_results = results
+    st.session_state.event_stream.append(create_event("INFO", f"Batch scan complete — {len(results)} results"))
     st.session_state.logs.append(format_log("OK", f"Batch done: {len(results)} targets"))
 
 # ── Session Banner ────────────────────────────────────────────────────────────
@@ -943,9 +1220,9 @@ with mc6: ui_metric("IPs TRACKED",  len(st.session_state.tracked_ips), "pur")
 st.markdown("<br>", unsafe_allow_html=True)
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
-tab1,tab2,tab3,tab4,tab5,tab6,tab7,tab8,tab9 = st.tabs([
+tab1,tab2,tab3,tab4,tab5,tab6,tab7,tab8,tab9,tab10 = st.tabs([
     "MAP & INTEL","ML ANALYSIS","ANALYTICS","PORT ANALYZER",
-    "BATCH","REPORT","AI COPILOT","HISTORY","TERMINAL"])
+    "BATCH","REPORT","AI COPILOT","EVENTS","HISTORY","TERMINAL"])
 
 # TAB 1 — MAP & INTEL
 with tab1:
@@ -959,6 +1236,13 @@ with tab1:
             ui_section("TARGET INTELLIGENCE")
             cat = predict_threat_category(ti)
             ui_threat_score(ti["final_score"], cat, ti["conf_cls"], ti["confidence"])
+
+            # [NEW v5.5] Correlated level + signals
+            ui_correlated_level(ti.get("corr_level","LOW"), ti.get("corr_cls","corr-low"), ti.get("signals",0))
+
+            # [NEW v5.5] Data source checklist
+            ui_data_sources(ti.get("abuse_available", False), ti.get("vt_available", False))
+
             ui_info_panel([
                 ("IP ADDRESS",  ip_info.get("query","N/A"), "ok"),
                 ("HOSTNAME",    ip_info.get("reverse","N/A"), ""),
@@ -986,14 +1270,27 @@ with tab1:
             if ti.get("km_dist"):
                 lv = "hi" if ti["km_dist"] > GEO_JUMP_KM else "lo"
                 ui_alert(f"GEO JUMP: {ti['km_dist']:,.0f} km from last scan", lv)
+
             ui_section("WHY IS THIS IP RISKY?")
             ui_xai_panel(build_why_risky(ti, ip_info))
+
+            # [NEW v5.5] Textual reasoning
+            reasoning = build_xai_reasoning(ti, ip_info)
+            st.markdown(f'<div class="xai" style="border-left-color:#a855f7;margin-top:6px">'
+                        f'<span style="color:#a855f7;font-weight:bold">AI REASONING: </span>{reasoning}</div>',
+                        unsafe_allow_html=True)
+
             ui_info_panel([
                 ("ABUSE REPORTS", str(ti["flags"].get("reports",0)), "bad" if ti["flags"].get("reports",0)>100 else "wn" if ti["flags"].get("reports",0)>20 else "ok"),
                 ("VT SCORE",   f"{ti['vt_score']}/100", ""),
                 ("DATA SOURCE", ti["source"].upper(), ""),
                 ("SCAN TIME",  datetime.now().strftime("%Y-%m-%d %H:%M:%S"), ""),
             ])
+
+        # [NEW v5.5] Decision support panel below map columns
+        ui_section("RECOMMENDED ACTIONS")
+        ui_decision_panel(ti)
+
     else:
         st.markdown("""<div style="text-align:center;padding:70px 20px">
           <div style="font-family:'Orbitron',monospace;font-size:3rem;color:#0d4f6e">[ ]</div>
@@ -1154,22 +1451,24 @@ with tab6:
         with rc1:
             ui_section("REPORT PREVIEW")
             ui_info_panel([
-                ("GENERATED AT",  report["generated_at"][:19], ""),
-                ("TARGET IP",     report["ip_intelligence"]["ip"], "ok"),
-                ("COUNTRY",       report["ip_intelligence"]["country"], ""),
-                ("CITY",          report["ip_intelligence"]["city"], ""),
-                ("ISP",           report["ip_intelligence"]["isp"], ""),
-                ("THREAT SCORE",  f"{report['threat_intelligence']['final_score']}/100",
+                ("GENERATED AT",   report["generated_at"][:19], ""),
+                ("TARGET IP",      report["ip_intelligence"]["ip"], "ok"),
+                ("COUNTRY",        report["ip_intelligence"]["country"], ""),
+                ("CITY",           report["ip_intelligence"]["city"], ""),
+                ("ISP",            report["ip_intelligence"]["isp"], ""),
+                ("THREAT SCORE",   f"{report['threat_intelligence']['final_score']}/100",
                  "bad" if report["threat_intelligence"]["final_score"]>60 else "wn" if report["threat_intelligence"]["final_score"]>30 else "ok"),
-                ("RISK LEVEL",    report["threat_intelligence"]["risk_level"], "wn"),
-                ("CONFIDENCE",    report["threat_intelligence"]["confidence"], ""),
-                ("DATA SOURCE",   report["threat_intelligence"]["source"].upper(), ""),
-                ("OPEN PORTS",    str(sum(1 for p in port_res if p["state"]=="OPEN")), ""),
-                ("ABUSE REPORTS", str(report["threat_intelligence"]["reports"]), ""),
+                ("RISK LEVEL",     report["threat_intelligence"]["risk_level"], "wn"),
+                ("CORR. LEVEL",    report["threat_intelligence"]["corr_level"], "wn"),
+                ("RISK SIGNALS",   str(report["threat_intelligence"]["signals"]), ""),
+                ("CONFIDENCE",     report["threat_intelligence"]["confidence"], ""),
+                ("DATA SOURCE",    report["threat_intelligence"]["source"].upper(), ""),
+                ("OPEN PORTS",     str(sum(1 for p in port_res if p["state"]=="OPEN")), ""),
+                ("ABUSE REPORTS",  str(report["threat_intelligence"]["reports"]), ""),
             ])
         with rc2:
             ui_section("EXPORT OPTIONS")
-            st.markdown('<div class="ip" style="font-size:.76rem">Full intelligence snapshot: geolocation, threat scores, port scan, WHOIS.</div>', unsafe_allow_html=True)
+            st.markdown('<div class="ip" style="font-size:.76rem">Full intelligence snapshot: geolocation, threat scores, port scan, WHOIS, correlated risk level.</div>', unsafe_allow_html=True)
             fname = resolved_ip.replace(".","_")
             st.download_button("Download CSV Report", report_to_csv(report).encode(),
                                f"cybertrack_{fname}.csv","text/csv",use_container_width=True)
@@ -1214,8 +1513,42 @@ with tab7:
             st.session_state.chat_history = []
             st.rerun()
 
-# TAB 8 — HISTORY
+# TAB 8 — EVENTS [NEW v5.5]
 with tab8:
+    ev_col1, ev_col2 = st.columns([3, 2])
+    with ev_col1:
+        ui_section("LIVE EVENT STREAM")
+        stream_html = render_event_stream(st.session_state.event_stream)
+        st.markdown(
+            f'<div class="term" style="height:380px">{stream_html}</div>',
+            unsafe_allow_html=True)
+        if st.button("Clear Event Stream", use_container_width=True):
+            st.session_state.event_stream = [create_event("INFO","Event stream cleared")]
+            st.rerun()
+
+        # Event stats
+        if st.session_state.event_stream:
+            info_c  = sum(1 for e in st.session_state.event_stream if e["level"] == "INFO")
+            warn_c  = sum(1 for e in st.session_state.event_stream if e["level"] == "WARNING")
+            crit_c  = sum(1 for e in st.session_state.event_stream if e["level"] == "CRITICAL")
+            ui_info_panel([
+                ("INFO EVENTS",     str(info_c), "ok"),
+                ("WARNING EVENTS",  str(warn_c), "wn"),
+                ("CRITICAL EVENTS", str(crit_c), "bad"),
+                ("TOTAL EVENTS",    str(len(st.session_state.event_stream)), ""),
+            ])
+
+    with ev_col2:
+        ui_section("BEHAVIOR ANALYSIS")
+        insights = analyze_behavior(st.session_state.tracked_ips, hdf)
+        ui_behavior_insights(insights)
+
+        if ip_info and ip_info.get("status") == "success" and ti:
+            ui_section("DECISION SUPPORT")
+            ui_decision_panel(ti)
+
+# TAB 9 — HISTORY
+with tab9:
     ui_section("SCAN HISTORY")
     hf1,hf2,hf3 = st.columns(3)
     with hf1: cf = st.selectbox("Country",["All"]+sorted(hdf["country"].dropna().unique().tolist()))
@@ -1241,8 +1574,8 @@ with tab8:
             st.session_state.logs.append(format_log("WARN","History reset"))
             st.rerun()
 
-# TAB 9 — TERMINAL
-with tab9:
+# TAB 10 — TERMINAL
+with tab10:
     ui_section("LIVE SYSTEM TERMINAL")
     st.markdown(f'<div class="term">{"".join(st.session_state.logs[-50:])}</div>', unsafe_allow_html=True)
     tc1,tc2,tc3 = st.columns(3)
@@ -1260,12 +1593,14 @@ with tab9:
                 format_log("INFO",f"VirusTotal: {'LIVE' if VIRUSTOTAL_KEY else 'MOCK'}"),
                 format_log("INFO",f"OpenAI: {'LIVE' if OPENAI_KEY else 'RULE-BASED'}"),
                 format_log("OK", f"Anomalies: {st.session_state.anomaly_count}"),
+                format_log("OK", f"Events: {len(st.session_state.event_stream)}"),
             ])
             st.rerun()
     with tc3:
         if st.button("Reset Data", use_container_width=True):
             st.session_state.history = generate_history(40)
             st.session_state.anomaly_count = 0
+            st.session_state.event_stream = [create_event("INFO","All data reset")]
             st.session_state.logs.append(format_log("WARN","All data reset"))
             st.rerun()
     ui_section("NETWORK DIAGNOSTICS")
@@ -1287,6 +1622,8 @@ with tab9:
                 ("FINAL SCORE",f"{ti['final_score']}/100","bad" if ti["final_score"]>60 else "wn" if ti["final_score"]>30 else "ok"),
                 ("ABUSE",f"{ti['abuse_score']}/100",""),("VT",f"{ti['vt_score']}/100",""),
                 ("PORT RISK",f"{ti['port_score']}/100",""),("GEO ANOM",f"{ti['geo_score']}/100",""),
+                ("CORR. LEVEL",ti.get("corr_level","?"),""),
+                ("SIGNALS",str(ti.get("signals",0)),""),
                 ("SOURCE",ti["source"].upper(),""),("CONF",ti["confidence"],""),
             ])
         else:
@@ -1295,7 +1632,7 @@ with tab9:
 st.markdown("""
 <div style="text-align:center;padding:28px 0 8px;font-family:'Share Tech Mono',monospace;
             font-size:.68rem;color:#2a4a5b;letter-spacing:2px;border-top:1px solid #0d4f6e;margin-top:28px">
-  CYBERTRACK v5.0 | AI-POWERED THREAT INTELLIGENCE | AUTHORIZED USE ONLY<br>
+  CYBERTRACK v5.5 | AI-POWERED THREAT INTELLIGENCE | AUTHORIZED USE ONLY<br>
   <span style="color:#0d4f6e">ISOLATION FOREST | DBSCAN | ABUSEIPDB | VIRUSTOTAL | OPENAI | FOLIUM | PLOTLY | STREAMLIT</span>
 </div>
 """, unsafe_allow_html=True)
