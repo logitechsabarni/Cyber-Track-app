@@ -1,16 +1,5 @@
 
-CyberTrack v6.0 — AI-Powered Cyber Threat Intelligence Platform
-Fixes: Quick Targets now auto-scan on click
-New Features:
-  - Live Threat Ticker (scrolling alerts)
-  - Animated Threat Score Ring (CSS)
-  - IP Comparison Mode (side-by-side)
-  - Network Topology Visualizer (Plotly)
-  - MITRE ATT&CK Technique Mapper
-  - Real-time Threat Feed simulation
-  - Threat Timeline with event annotations
-  - Dark/Glow UI polish upgrades
-"""
+
 
 import streamlit as st
 import folium
