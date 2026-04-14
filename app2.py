@@ -1,5 +1,4 @@
-cat > /home/claude/cybertrack_v6.py << 'PYEOF'
-"""
+
 CyberTrack v6.0 — AI-Powered Cyber Threat Intelligence Platform
 Fixes: Quick Targets now auto-scan on click
 New Features:
